@@ -8,6 +8,10 @@ build_linux() {
   mkdir -p "$DIR"
   cp ./install.sh "$DIR/install.sh"
   CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.version=${VERSION}" -o "${DIR}/recorder" ./cmd/recorder
+  if [[ $? -ne 0 ]]; then
+    echo "Build failed for $arch"
+    exit 1
+  fi
   PARENT=$(dirname "$DIR")
   BASE=$(basename "$DIR")
   tar -C "$PARENT" -I 'gzip -9' -cf "$DIR.tar.gz" "$BASE"

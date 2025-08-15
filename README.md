@@ -1,6 +1,6 @@
 # Recorder
 
-A small utility that continuously records RTSP video streams into configurable-length chunks
+A small utility that continuously records FFmpeg-compatible live video streams into video chunks
 
 ## Install
 
@@ -39,11 +39,22 @@ Installation complete.
 
 ## Configuration
 
-The configuration is a YAML file with camera URLs, a chunk `duration`, and a `slack` value (default 10s). `slack` adds extra recording time to overlap chunks because starting the next RTSP connection may take a moment. Each camera must have a unique `name`. Optional `transport` can be `udp` (default) or `tcp`.
+| Field | Type / Format | Units / Values | Description |
+| - | - | - | - |
+| `url` | string (URL) || URLs of the cameras. |
+| `duration` | string | `s`, `m`, `h` | Duration of the process that records the video, not necessarily the video itself, but it gives an approximation. |
+| `slack` | string | `s`, `m`, `h` (default `10s`) | Extra recording time to overlap chunks, compensates for connection startup delay. |
+| `name` | string || Unique name for each camera. |
+| `autoArgs` | boolean | `true` / `false` (default `true`) | If enabled, arguments will be updated automatically for better performance. |
+| `args` | dictionary || Contains argument lists for FFmpeg: |
+| - `global` | list || Arguments applied globally. |
+| - `input` | list || Arguments applied before the input URL. |
+| - `output` | list || Arguments applied before the output file path. |
+| `suffix` | string | default `.mkv` | The output file's suffix or extension. Includes the dot. *See note below* |
 
-`duration` and `slack` support the units `s`, `m`, and `h`.
 
-Here's an example:
+Here some examples:
+
 ```yaml
 cameras:
   - name: p1
@@ -64,12 +75,57 @@ cameras:
     slack: 10s
 ```
 
+```yaml
+cameras:
+  - name: park
+    url: http://172.19.20.228/cam/live.m3u8
+    duration: 1m
+    slack: 20s
+    args:
+      global: ["-hide_banner", "-loglevel", "error"]
+      output:
+        - -c:v
+        - h264_nvenc
+        - -profile:v
+        - high
+        - -bf
+        - 2
+        - -g
+        - 30
+        - -crf
+        - 18
+        - -pix_fmt
+        - yuv420p
+  - name: street
+    url: http://172.19.20.229/cam/live.m3u8
+    duration: 10m
+```
+
+This is what the final command would look like:
+
+```bash
+ffmpeg [global...] [input...] -i url [output...] name/yyyymmdd/name-yyyymmdd-hhmmss[suffix]
+```
+
+> [!IMPORTANT]
+> It's recommended to keep the default `.mkv` `suffix`.
+> When recording/transcoding live streams with FFmpeg, MKV is safer and more flexible than MP4. MKV remains playable even if the process or stream is interrupted (MP4 often doesn’t, due to its end-of-file index)
+
+> [!NOTE]
+> It's important to note that if the source is an HLS stream, you need to make sure it's a **live** stream. Otherwise, the recording will always start from the same point, likely increasing in length over time.
+
 An example of a flow could be the following with `duration: 30m` and `slack: 10s`:
 - p1 chunk 0 starts at 10:55:08
 - p1 chunk 1 starts at 11:25:08
 - p1 chunk 0 ends at 11:25:18
 
 Note that this indicates the start and end of the process, not necessarily the actual duration of the video chunk. Due to the connection process, depending on the device and connection, it may be advisable to have a `slack: 20s`
+
+### autoArgs
+
+* If `autoArgs` is `true` (the default) and the `url` starts with `rtsp`, then the input arguments list will automatically have `-rtsp_transport` `udp` appended.
+* If `autoArgs` is `true` and the output arguments don't specify any codec options or include options incompatible with stream copy, then `-c` `copy` will be added.
+
 
 ## Build
 
@@ -97,7 +153,7 @@ Alternatively, you can run the binary directly:
 
 That way the videos will be created in the current directory in a subdirectory with the name given in the configuration file. In the case of the service, the installation script sets the `WorkingDirectory` in the systemd unit.
 
-An output file structure, from the configuration given above, might look something like this:
+An output file structure, from the first configuration given above, might look something like this:
 
 ```
 .
