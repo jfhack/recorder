@@ -195,3 +195,12 @@ An output file structure, from the first configuration given above, might look s
 ```
 
 The utility is intentionally simple and lightweight so it runs efficiently on devices like a Raspberry Pi.
+
+## Storage
+
+> [!IMPORTANT]
+> It's recommended to use a surveillance disk, such as WD Purple or Seagate SkyHawk, or a NAS disk, such as WD Red Plus or Seagate IronWolf. The recorder writes 24/7, and desktop or portable disks (especially bus-powered 2.5" USB disks) aren't rated for that and tend to fail much sooner.
+
+* Avoid SMR disks. When old recordings are deleted and the space is written again, they have to rewrite neighbouring tracks, which slows them down and adds wear.
+* Give the disk its own power supply (a 3.5" disk with its adapter, or a powered USB hub) and keep it cool.
+* The recorder never deletes recordings, so a separate system that removes the oldest ones is needed. Deleting whole day directories (`name/yyyymmdd`) is the simplest way. Keep 10–15% of the disk free, e.g. start deleting at 85–90% usage instead of letting it fill up.
