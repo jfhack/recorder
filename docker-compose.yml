@@ -1,0 +1,27 @@
+x-go: &go
+  volumes:
+    - .:/src
+    - go-cache:/root/.cache/go-build
+    - go-mod:/go/pkg/mod
+  working_dir: /src
+  environment:
+    GOFLAGS: -buildvcs=false
+
+services:
+  # docker compose run --rm build ./build.sh
+  build:
+    <<: *go
+    build:
+      context: .
+      target: build
+
+  # docker compose run --rm dev <cmd>   (has ffmpeg, for running the recorder)
+  dev:
+    <<: *go
+    build:
+      context: .
+      target: dev
+
+volumes:
+  go-cache:
+  go-mod:

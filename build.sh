@@ -1,6 +1,10 @@
 #!/bin/bash
 
-VERSION=$(cat version | tr -d '[:space:]')
+VERSION="${VERSION:-$(tr -d '[:space:]' < version)}"
+
+if [[ $(id -u) -eq 0 ]]; then
+  trap 'chown -R "$(stat -c %u:%g .)" build 2>/dev/null' EXIT
+fi
 
 build_linux() {
   local arch=$1

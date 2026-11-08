@@ -7,19 +7,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	"recorder/pkg/config"
 )
 
+const (
+	retryDelay = 5 * time.Second
+	stopTimeout = 10 * time.Second
+)
+
 func Run(ctx context.Context, cam config.CamCfg) {
 	dur, _ := time.ParseDuration(cam.Duration)
 	slack, _ := time.ParseDuration(cam.Slack)
+	args := ffmpegArgs(cam)
+
+	var wg sync.WaitGroup
+	defer wg.Wait()
 
 	base := time.Now()
-	segment := 0
-
-	for {
+	for segment := 0; ; segment++ {
 		start := base.Add(time.Duration(segment) * dur)
 
 		if delay := time.Until(start); delay > 0 {
@@ -30,38 +39,33 @@ func Run(ctx context.Context, cam config.CamCfg) {
 			}
 		}
 
-		dateDir := filepath.Join(cam.Name, start.Format("20060102"))
-		if err := os.MkdirAll(dateDir, 0o755); err != nil {
-			log.Printf("[%s] mkdir error: %v", cam.Name, err)
-		}
-		fname := fmt.Sprintf("%s-%s%s", cam.Name, start.Format("20060102-150405"), cam.Suffix)
-		outPath := filepath.Join(dateDir, fname)
+		log.Printf("[%s] scheduling segment #%d at %s", cam.Name, segment, start.Format(time.RFC3339))
 
-		log.Printf("[%s] scheduling segment #%d at %s → %s",
-			cam.Name, segment,
-			start.Format(time.RFC3339), outPath,
-		)
-
-		go runSegment(ctx, cam, segment, start, outPath, dur, slack)
-
-		segment++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runSegment(ctx, cam, segment, start, start.Add(dur+slack), args)
+		}()
 	}
 }
 
-func runSegment(parentCtx context.Context, cam config.CamCfg, segment int, start time.Time, outPath string, dur, slack time.Duration) {
-	end := start.Add(dur + slack)
-	segCtx, cancel := context.WithDeadline(parentCtx, end)
-	defer cancel()
-
+func ffmpegArgs(cam config.CamCfg) []string {
 	var args []string
+	global := append([]string{}, cam.Args.Global...)
 	in := append([]string{}, cam.Args.Input...)
 	if cam.AutoArgsEnabled() {
+		if !config.HasFlag(global, "-loglevel") && !config.HasFlag(global, "-v") {
+			global = append(global, "-loglevel", "error")
+		}
+		if !config.HasFlag(global, "-stats") && !config.HasFlag(global, "-nostats") {
+			global = append(global, "-nostats")
+		}
 		if cam.IsRTSP() && !config.HasFlag(in, "-rtsp_transport") {
 			in = append(in, "-rtsp_transport", "udp")
 		}
 	}
 
-	args = append(args, cam.Args.Global...)
+	args = append(args, global...)
 	args = append(args, in...)
 	args = append(args, "-i", cam.URL)
 
@@ -71,33 +75,54 @@ func runSegment(parentCtx context.Context, cam config.CamCfg, segment int, start
 			out = append(out, "-c", "copy")
 		}
 	}
-	args = append(args, out...)
-	args = append(args, outPath)
+	return append(args, out...)
+}
 
+func runSegment(parentCtx context.Context, cam config.CamCfg, segment int, start, end time.Time, args []string) {
+	segCtx, cancel := context.WithDeadline(parentCtx, end)
+	defer cancel()
+
+	fileTime := start
 	for {
-		select {
-		case <-segCtx.Done():
+		outPath, err := outputPath(cam, fileTime)
+		if err == nil {
+			log.Printf("[%s] segment #%d: launching ffmpeg → %s", cam.Name, segment, outPath)
+			err = runFFmpeg(segCtx, slices.Concat(args, []string{outPath}))
+		}
+		if segCtx.Err() != nil {
 			log.Printf("[%s] segment #%d ended at %s", cam.Name, segment, time.Now().Format(time.RFC3339))
 			return
-		default:
 		}
-
-		cmd := exec.CommandContext(segCtx, "ffmpeg",
-		  args...
-		)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-
-		log.Printf("[%s] segment #%d: launching ffmpeg", cam.Name, segment)
-		err := cmd.Run()
-		if segCtx.Err() == context.DeadlineExceeded {
-			return
-		}
-		log.Printf("[%s] segment #%d: ffmpeg error: %v; retrying in 5s", cam.Name, segment, err)
+		log.Printf("[%s] segment #%d: ffmpeg exited early (%v); retrying in %s", cam.Name, segment, err, retryDelay)
 
 		select {
-		case <-time.After(5 * time.Second):
+		case <-time.After(retryDelay):
 		case <-segCtx.Done():
 			return
 		}
+		fileTime = time.Now()
 	}
+}
+
+func outputPath(cam config.CamCfg, t time.Time) (string, error) {
+	dir := filepath.Join(cam.Name, t.Format("20060102"))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir: %w", err)
+	}
+	return filepath.Join(dir, fmt.Sprintf("%s-%s%s", cam.Name, t.Format("20060102-150405"), cam.Suffix)), nil
+}
+
+func runFFmpeg(ctx context.Context, args []string) error {
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Cancel = func() error {
+		_, err := stdin.Write([]byte("q"))
+		return err
+	}
+	cmd.WaitDelay = stopTimeout
+	return cmd.Run()
 }

@@ -121,15 +121,24 @@ An example of a flow could be the following with `duration: 30m` and `slack: 10s
 
 Note that this indicates the start and end of the process, not necessarily the actual duration of the video chunk. Due to the connection process, depending on the device and connection, it may be advisable to have a `slack: 20s`
 
+If FFmpeg exits early during a chunk (e.g. the connection drops), it is restarted after 5s into a new file named after the restart time.
+
 ### autoArgs
 
-* If `autoArgs` is `true` (the default) and the `url` starts with `rtsp`, then the input arguments list will automatically have `-rtsp_transport` `udp` appended.
+* If `autoArgs` is `true` (the default) and the global arguments don't set `-loglevel`/`-v`, then `-loglevel` `error` is added, and `-nostats` unless `-stats`/`-nostats` is given. FFmpeg's output goes to the systemd journal, and by default it writes a progress line every 0.5 s per process, adding constant writes to the system disk.
+* If `autoArgs` is `true` and the `url` starts with `rtsp`, then the input arguments list will automatically have `-rtsp_transport` `udp` appended.
 * If `autoArgs` is `true` and the output arguments don't specify any codec options or include options incompatible with stream copy, then `-c` `copy` will be added.
 
 
 ## Build
 
-To build you need to have [Go](https://go.dev/doc/install) installed, then simply use the `build.sh` script.
+Builds run in Docker (Go 1.27.3 on Debian 13 trixie), so only Docker is needed:
+
+```bash
+docker compose run --rm build ./build.sh
+```
+
+The version comes from the `version` file; override it with `-e VERSION=v0.2.0`. The archives are written to `build/`:
 
 ```
 └── build

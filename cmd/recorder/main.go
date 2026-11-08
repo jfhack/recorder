@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"recorder/pkg/config"
@@ -42,10 +43,16 @@ func main() {
 		cancel()
 	}()
 
+	var wg sync.WaitGroup
 	for _, cam := range cams {
-		go worker.Run(ctx, cam)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			worker.Run(ctx, cam)
+		}()
 	}
 
 	<-ctx.Done()
+	wg.Wait()
 	log.Println("all workers stopped")
 }
